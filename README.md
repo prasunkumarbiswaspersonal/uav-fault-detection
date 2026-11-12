@@ -217,7 +217,7 @@ Built with Streamlit and Plotly, the dashboard provides a glassmorphism flight o
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/Prasun-Kumar-Biswas4480/uav-fault-detection.git
+git clone https://github.com/prasunkumarbiswaspersonal/uav-fault-detection.git
 cd uav-fault-detection
 ```
 
@@ -296,3 +296,4 @@ tests/test_pipeline.py::TestIngestion::test_scan_files_discovers_real_flights PA
 ---
 
 *Developed for Autonomous UAV Safety & Predictive Maintenance.*
+
