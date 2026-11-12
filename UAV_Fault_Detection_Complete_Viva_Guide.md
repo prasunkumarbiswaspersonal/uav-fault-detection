@@ -538,6 +538,7 @@ Our system uses physical sensor rules to explain **both why this failure occurre
 | **17** | **Large Binary Commits** | 940MB+ `.mat` and `.joblib` files clogged Git repo. | Created `.gitignore` excluding raw `.mat`, `.joblib`, and `.venv`. |
 | **18** | **Unused Heavy Requirements** | Legacy `uvicorn` and `websockets` bloated install size. | Pruned direct dependencies strictly to scientific Python stack. |
 | **19** | **Batch Log Analysis Used Argmax** | Offline analysis lacked asymmetric safety thresholds. | Unified `app.py` batch processing with `UAVModelEvaluator.apply_asymmetric_thresholds()`. |
+| **20** | **LightGBM 4.7 Deprecated eval_set** | `eval_set` parameter in `LGBMClassifier.fit()` emitted deprecation warnings during testing. | Re-engineered validation fitting using keyword `eval_X` and `eval_y`, ensuring clean, warning-free execution across test runners. |
 
 ---
 

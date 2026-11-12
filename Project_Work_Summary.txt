@@ -315,6 +315,10 @@ Lead: Prasun Kumar Biswas
     dropped 69k ArduPilot rows during                               canonical columns with
     master DataFrame standardization                                combine_first()
 
+20  LightGBM 4.7 eval_set deprecation        src/model_training.py  Migrated to eval_X and
+    warning in cross-validation loop                                eval_y, achieving zero
+                                                                    warnings in pytest suite
+
 
 ================================================================================
 5. TEST SUITE
