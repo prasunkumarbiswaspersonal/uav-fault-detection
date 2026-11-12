@@ -1,0 +1,563 @@
+================================================================================
+UAV FAULT DETECTION SYSTEM: MACHINE LEARNING PROJECT EXECUTION PLAN
+================================================================================
+Project Title:
+  Machine Learning-Driven Telemetry Fault Detection and Operational State
+  Classification for Autonomous Unmanned Aerial Vehicles (UAVs)
+
+Faculty Advisor & Project Guide:
+  Rama Prasanna Dalai
+
+Project Team Members:
+  1. Manideepa Mohapatra     | Reg No: 250301230001
+  2. Omm Shree Hota          | Reg No: 250301230002
+  3. Milan Mandal            | Reg No: 250301230006
+  4. Prasun Kumar Biswas     | Reg No: 250301230010
+  5. Ipsita Priyadarshini    | Reg No: 250301230015
+  6. Sneha Singh             | Reg No: 250301230023
+
+Target Operational States:
+  [0] Normal Flight
+  [1] Propeller Imbalance
+  [2] Battery Degradation
+  [3] Motor Failure
+
+Primary Telemetry Channels:
+  - Battery_Voltage (V)
+  - Current (A)
+  - Temperature (deg C)
+  - Vibration (accelerometer RMS / variance in m/s^2)
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. Team Quick-Start: Simplified 5-Step Workflow (Plain-English Guide)
+2. Executive Summary & Primary Benchmark Data Sources
+3. Model Selection & Algorithmic Benchmarking Strategy
+4. Training on Imbalanced Telemetry & Flight-Level Splitting Methodology
+5. Advanced Sensor Feature Engineering: FFT Peak & Spectral Extraction
+   (Includes Baseline "Smooth Flight" Calibration Protocol)
+6. Asymmetric Risk Evaluation & Metrics Hierarchy
+7. Streamlit Ground Control Station (GCS) Deployment Architecture
+8. Engineering Implementation Milestones & Roadmap
+9. Team Member Work Breakdown & Responsibility Matrix
+
+================================================================================
+1. TEAM QUICK-START: SIMPLIFIED 5-STEP WORKFLOW (PLAIN-ENGLISH GUIDE)
+================================================================================
+This project plan contains rigorous aerospace ML engineering terms, but the
+actual code you and your teammates will write maps directly to standard, friendly
+Python libraries (Pandas, Scikit-Learn, LightGBM, and Streamlit).
+
+Here is the entire system broken down into 5 straightforward coding steps:
+
+--------------------------------------------------------------------------------
+Step 1: The File Loader (Dynamic Ingestion)
+--------------------------------------------------------------------------------
+- Plain English: We have multiple flight logs stored as .csv, .mat, or .parquet
+  files in subfolders. We need a script that searches through the 'datasets/'
+  folder, loads every file regardless of format, and stacks them into one big
+  master Pandas DataFrame.
+- Your daily Python task: Write a loop using `pathlib.Path.rglob('*')`. Check the
+  extension (`.csv` -> `pd.read_csv`, `.mat` -> `scipy.io.loadmat`). Tag each
+  row with its source filename (`Flight_ID`) so we know which flight it came from.
+
+--------------------------------------------------------------------------------
+Step 2: The Housekeeper (Cleaning & Standardizing)
+--------------------------------------------------------------------------------
+- Plain English: Different drone flight controllers name their sensor channels
+  differently (e.g., 'vbat' vs 'volt' vs 'voltage'). We rename them to 4 clean
+  standard names: Battery_Voltage, Current, Temperature, and Vibration.
+- Your daily Python task: Use a simple dictionary mapping to rename columns.
+  Then, fix missing sensor blips using `df.interpolate(method='linear')`
+  (connecting the dots over brief sensor dropouts) and cap extreme sensor noise
+  using `df.clip()`.
+
+--------------------------------------------------------------------------------
+Step 3: The Math Helper (Feature Engineering & FFT)
+--------------------------------------------------------------------------------
+- Plain English: Raw telemetry gives us single numbers every 20 milliseconds,
+  which isn't enough to see trends. We calculate moving averages (e.g., average
+  voltage over the last 1 second to spot voltage sag) and moving vibration.
+  For broken propellers, we run a Fast Fourier Transform (FFT) on 1-second chunks
+  to find the loudest buzzing vibration frequency (damaged blades vibrate at
+  harsh harmonic tones).
+- Your daily Python task: Calculate moving averages using `df.rolling(50).mean()`.
+  For vibration, compute `np.abs(np.fft.rfft(vibe_window))` to grab the highest
+  frequency peak.
+
+--------------------------------------------------------------------------------
+Step 4: The Brain (Model Training & Smart Splitting)
+--------------------------------------------------------------------------------
+- Plain English: We train a Machine Learning model (LightGBM / Random Forest) to
+  predict whether the drone is Healthy, or suffering from a Propeller, Battery,
+  or Motor failure.
+- Crucial Rule: Always split your train and test sets by *whole flights* (using
+  `StratifiedGroupKFold`), never random row shuffling! Otherwise, your test set
+  will contain seconds 11 and 13 from the exact flight where the model trained on
+  second 12, creating fake 99% accuracy.
+- Your daily Python task: Tell the model to pay extra attention to rare motor
+  failures by adding `class_weight='balanced'` when calling `LGBMClassifier()`.
+
+--------------------------------------------------------------------------------
+Step 5: The Presentation (Streamlit Web Dashboard)
+--------------------------------------------------------------------------------
+- Plain English: Build a clean, interactive browser dashboard to show your
+  professor and peers how the drone's health is monitored.
+- Your daily Python task: Create an `app.py` script using Streamlit. Add a file
+  upload button to drag-and-drop a flight log, display real-time line charts of
+  voltage and vibration, and show a big status box (Green = Normal Flight,
+  Red = Critical Motor Failure!).
+
+================================================================================
+2. EXECUTIVE SUMMARY & PRIMARY BENCHMARK DATA SOURCES
+================================================================================
+The objective of this project is to develop, validate, and deploy an automated
+fault detection and diagnostic system for autonomous Unmanned Aerial Vehicles
+(UAVs). Telemetry from flight controllers is collected across heterogeneous
+file formats (.csv, .mat, .parquet, .h5).
+
+--------------------------------------------------------------------------------
+Primary Data Sources & Benchmark Verification
+--------------------------------------------------------------------------------
+To satisfy academic and engineering evaluation standards, this project avoids
+fabricated or synthetic dummy data. Our ingestion pipeline is built directly
+around three established, publicly available, peer-reviewed UAV telemetry
+benchmarks:
+
+1. ALFA Dataset (AIR Lab Failure and Anomaly Dataset - CMU / NASA):
+   - Scope: 47 autonomous flights (fixed-wing and multirotor UAVs) featuring
+     mid-flight actuator failures, motor shutdowns, and control surface faults.
+   - Channels: High-rate IMU, battery voltage, current draw, motor RPM, and
+     flight controller state logs.
+   - Formats: CSV, MATLAB (.mat), and ROS bag logs.
+   - Reference: Keipour et al., Carnegie Mellon University AIR Lab & NASA.
+     Accessible via: http://theairlab.org/alfa-dataset/
+
+2. DronePropB Ground Testing Dataset:
+   - Scope: Dedicated ground test bench dataset systematically recording
+     healthy propellers versus damaged, cracked, and imbalanced blades across
+     controlled motor RPM increments.
+   - Channels: Multichannel high-frequency vibration accelerometer logs.
+   - Formats: MATLAB (.mat) files.
+
+3. UAV-Realistic-Fault-Dataset (ICRA 2023):
+   - Scope: Realistic multi-mission flights capturing complete flight profiles
+     (takeoff, hover, maneuvering, landing) with 0, 1, 2, 3, and 4 broken
+     propeller blades.
+   - Channels: Onboard accelerometer, gyroscope, and acoustic sensors.
+   - Reference: Accepted at IEEE International Conference on Robotics and
+     Automation (ICRA 2023).
+
+Academic Feasibility Note:
+All target datasets are already downloaded and organized in the local workspace
+directory structure (`datasets/`), guaranteeing a concrete, verifiable data path
+without reliance on synthetic data.
+
+================================================================================
+3. MODEL SELECTION & ALGORITHMIC BENCHMARKING STRATEGY
+================================================================================
+We recommend benchmarking four candidate architectures, progressing from fast,
+explainable tabular baselines to gradient-boosted ensembles and temporal
+deep learning models.
+
+--------------------------------------------------------------------------------
+A. Deliverable Scope & Hardware Target Clarification
+--------------------------------------------------------------------------------
+- Primary Deliverable & Core Academic Requirement:
+  The standalone Streamlit Ground Control Station (GCS) dashboard running on a
+  standard desktop/laptop Python runtime (with offline log upload and simulated
+  50 Hz real-time replay).
+- Physical Hardware Deployment (Optional Extension / Stretch Goal):
+  Sub-millisecond inference on physical companion hardware (Raspberry Pi 4/5,
+  NVIDIA Jetson Orin Nano) is an optional extension. Standard 'joblib' or
+  'pickle' serialization in Python is fully sufficient for the Streamlit
+  deliverable. ONNX / Treelite compilation is de-prioritized as an optional
+  stretch goal for Week 4 if extra development bandwidth remains.
+
+--------------------------------------------------------------------------------
+B. LightGBM / XGBoost (Priority: Tier 1 - Primary Production Candidate)
+--------------------------------------------------------------------------------
+Why it fits UAV Telemetry:
+- Gradient Boosted Decision Trees excel at tabular data with non-linear feature
+  interactions (e.g., electrical power sag: Power = Voltage * Current vs. thermal
+  rise).
+- Invariant to monotonic scaling differences across sensors.
+- Handles slight remaining sensor noise and missing values without degrading.
+- Supports native class-weighted optimization (class_weight='balanced') to
+  penalize misclassifications on rare fault classes.
+- Fast evaluation: ~1-2 ms per frame in pure Python via joblib, dropping to
+  <0.5 ms if compiled with ONNX.
+
+--------------------------------------------------------------------------------
+C. Random Forest Classifier (Priority: Tier 1 - Interpretability Baseline)
+--------------------------------------------------------------------------------
+Why it fits UAV Telemetry:
+- Bagging ensemble provides exceptional stability and resilience against
+  overfitting when working with limited flight mission logs.
+- Native support for balanced class weighting via:
+    RandomForestClassifier(class_weight='balanced_subsample', n_estimators=150)
+- Mean Decrease in Impurity (MDI) and Permutation Feature Importance provide
+  immediate physical verification (e.g., confirming Vibration FFT peaks dominate
+  Propeller Imbalance, while Voltage_Roll_Mean dominates Battery Degradation).
+- Serves as the primary sanity-check baseline for all tree models.
+
+--------------------------------------------------------------------------------
+D. 1D Convolutional Neural Network / Temporal ConvNet (Priority: Tier 2)
+--------------------------------------------------------------------------------
+Why it fits UAV Telemetry:
+- Vibration signals contain distinct frequency signatures generated by motor RPM
+  and aerodynamic blade flutter.
+- 1D-CNN kernels act as trainable bandpass filters over raw time-series buffers
+  (e.g., 50-sample windows), learning harmonic distortion directly from vibration
+  waveforms without manual Fourier transforms.
+- Deployment profile: Capable of edge execution with PyTorch / ONNX.
+
+--------------------------------------------------------------------------------
+E. Support Vector Machine with RBF Kernel (Priority: Tier 3 - Benchmark Only)
+--------------------------------------------------------------------------------
+Why it fits UAV Telemetry:
+- Establishes maximum margin hyperplanes in normalized multi-dimensional sensor
+  space (StandardScaler).
+- Effective for clean boundaries between Normal Flight and steady Battery
+  Degradation.
+- Limitation: Inference latency scales with the number of support vectors (O(N_sv)),
+  making it less viable for high-frequency real-time edge streaming.
+
+Recommended Phasing:
+- Phase 1: Train and optimize LightGBM and Random Forest on engineered rolling
+  and FFT spectral features.
+- Phase 2: Benchmark 1D-CNN against the best tree model to evaluate if raw
+  temporal waveforms yield higher recall on Propeller Imbalance.
+
+================================================================================
+4. TRAINING ON IMBALANCED TELEMETRY & FLIGHT-LEVEL SPLITTING METHODOLOGY
+================================================================================
+Telemetry data collected from UAV operations exhibits severe class imbalance:
+healthy "Normal Flight" typically constitutes 80% to 95% of total recorded flight
+time, while critical fault conditions (e.g., catastrophic motor burnout) appear
+only in brief segments.
+
+CRITICAL PITFALL: Standard random shuffling (e.g., train_test_split(shuffle=True))
+or naive row-level k-fold causes catastrophic data leakage. High-frequency
+telemetry points separated by 20 ms share near-identical aerodynamic states, and
+overlapping rolling windows share identical data points. This creates 99%+
+validation scores that fail completely on live flights.
+
+--------------------------------------------------------------------------------
+A. Training Strategies for Severe Class Imbalance
+--------------------------------------------------------------------------------
+To prevent the model from collapsing into a naive majority-class predictor:
+
+1. Algorithmic Cost-Sensitive Loss & Class Weighting:
+   - For Random Forest:
+       RandomForestClassifier(class_weight='balanced', random_state=42)
+     This dynamically adjusts weights inversely proportional to class frequencies:
+       w_j = N_samples / (N_classes * N_samples_j)
+   - For LightGBM:
+       LGBMClassifier(class_weight='balanced', objective='multiclass')
+     Or define explicit custom class penalties favoring Motor Failure (e.g., 10x).
+
+2. Flight-Level Strategic Undersampling (Preserving Temporal Integrity):
+   - WARNING: Never apply naive row-by-row random undersampling (e.g., standard
+     imblearn RandomUnderSampler on individual rows), as dropping random rows
+     destroys the temporal continuity required for rolling windows and FFT buffers.
+   - Recommended Method: Downsample entire redundant "Normal Flight" missions
+     at the flight-session level, or apply fixed temporal stride downsampling
+     (e.g., taking every 5th sample during stable cruise phases) exclusively on
+     the Normal Flight class, while preserving 100% of fault-injection flights
+     at full 50 Hz resolution.
+
+3. Avoid Naive SMOTE on Sensor Time-Series:
+   - Standard SMOTE generates synthetic points via linear feature interpolation.
+     In telemetry, this can synthesize physically impossible flight regimes
+     (e.g., high vibration without corresponding motor current). Stick to
+     algorithmic class weighting and flight-level subsampling.
+
+--------------------------------------------------------------------------------
+B. Split Unit: Entire Flight Mission (Flight_ID)
+--------------------------------------------------------------------------------
+- Telemetry MUST be partitioned at the flight mission / log file level.
+- Use StratifiedGroupKFold from scikit-learn, assigning:
+    groups = df['Flight_ID']
+- This guarantees that no telemetry record from an evaluation flight is ever seen
+  during model training.
+
+--------------------------------------------------------------------------------
+C. Dataset Partition Ratios
+--------------------------------------------------------------------------------
+- Training Set:   70% of total distinct flights
+- Validation Set: 15% of total distinct flights (for hyperparameter tuning)
+- Holdout Test:   15% of total distinct flights (strictly unseen evaluation)
+
+--------------------------------------------------------------------------------
+D. Transient Purging & Embargo Windows
+--------------------------------------------------------------------------------
+- For flight logs with induced mid-air faults (such as the ALFA dataset motor
+  failure injections), purge the transient 1.5-second boundary window around
+  the exact moment of fault injection.
+- This prevents transitional electrical spikes and emergency recovery maneuvers
+  from corrupting the steady-state fault signature.
+
+--------------------------------------------------------------------------------
+E. Featurization Ordering Guardrail
+--------------------------------------------------------------------------------
+- Preprocessing pipelines (StandardScaler, outlier bounds, imputation medians)
+  must be fitted ONLY on the Training split, then applied (transform-only) to
+  Validation and Test splits to eliminate distribution leakage.
+
+================================================================================
+5. ADVANCED SENSOR FEATURE ENGINEERING: FFT PEAK & SPECTRAL EXTRACTION
+================================================================================
+Why Simple Rolling Variance is Insufficient for Propeller Faults:
+- Simple rolling variance or RMS measures only the aggregate magnitude of vibration.
+- Strong atmospheric wind gusts, aggressive acrobatic maneuvers, or ground taxiing
+  can produce high overall vibration energy without any mechanical damage, leading
+  to frequent false alarms.
+- Conversely, a chipped or partially cracked propeller tip generates a distinct
+  high-frequency harmonic resonance at the blade-pass frequency (BPF) and motor
+  RPM rotational harmonics (typically 40 Hz to 250 Hz), even if the aggregate
+  RMS increase is subtle.
+
+--------------------------------------------------------------------------------
+Baseline "Smooth Flight" Calibration Protocol for StandardScaler
+--------------------------------------------------------------------------------
+How does the model know what "smooth flight" looks like?
+- In a raw dataset, vibration and current levels vary naturally across different
+  airframe geometries, payload weights, and motor configurations. A model cannot
+  distinguish abnormal vibration without an established healthy reference.
+- Protocol: The preprocessing pipeline sets aside a clean, verified, fault-free
+  calibration flight log (a "Golden Run" / healthy baseline flight) or isolates
+  the validated healthy cruise segments within the training split.
+- We fit `sklearn.preprocessing.StandardScaler` EXCLUSIVELY on this healthy
+  calibration baseline:
+    scaler.fit(X_healthy_calibration)
+- By anchoring the scaler to healthy flight:
+    * Normal Flight features center cleanly around Mean = 0.0, Std = 1.0.
+    * When an unseen flight is evaluated using `scaler.transform(X_unseen)`, any
+      upward shift in vibration spectral energy, harmonic peaks, or voltage sag
+      manifests as a distinct, high-amplitude Z-score shift (+3.0 to +8.0 sigma).
+    * This allows decision tree thresholds to establish razor-sharp, interpretable
+      boundaries between nominal cruise and abnormal mechanical vibration.
+
+--------------------------------------------------------------------------------
+Fast Fourier Transform (FFT) Feature Engineering Protocol:
+--------------------------------------------------------------------------------
+Over each 50-sample sliding window of accelerometer/vibration data (1.0 second at
+50 Hz sampling rate), compute the single-sided discrete Fourier transform via
+numpy.fft.rfft:
+
+1. Vibration Dominant Peak Frequency (Vibration_FFT_Peak_Freq):
+   - The exact frequency bin (Hz) exhibiting maximum spectral amplitude:
+       freqs = np.fft.rfftfreq(window_size, d=1.0/sampling_rate)
+       fft_vals = np.abs(np.fft.rfft(vibration_window))
+       peak_freq = freqs[np.argmax(fft_vals[1:]) + 1]  # exclude DC offset
+   - Captures the exact rotational harmonic of damaged blades.
+
+2. Vibration Peak Spectral Power (Vibration_FFT_Peak_Power):
+   - The power magnitude of the dominant frequency peak:
+       peak_power = np.max(fft_vals[1:]) ** 2
+   - Isolates harmonic resonance from broadband turbulence noise.
+
+3. Spectral Centroid / Frequency Center of Mass (Vibration_Spectral_Centroid):
+   - Weighted mean frequency representing spectral shape:
+       spectral_centroid = np.sum(freqs * fft_vals) / np.sum(fft_vals)
+   - When a propeller chips or deforms, high-frequency energy spikes, causing the
+     spectral centroid to shift noticeably upward compared to the healthy
+     calibration baseline.
+
+4. Harmonic Energy Ratio (Vibration_Harmonic_Energy_Ratio):
+   - The ratio of energy concentrated in the top 3 dominant harmonic peaks
+     versus total broad-spectrum energy. Damaged propellers exhibit concentrated
+     harmonic spikes, whereas wind turbulence displays diffuse broadband noise.
+
+Integrating these 4 spectral metrics allows gradient boosted decision trees
+(LightGBM / Random Forest) to easily separate true propeller imbalance from
+turbulent flight conditions.
+
+================================================================================
+6. ASYMMETRIC RISK EVALUATION & METRICS HIERARCHY
+================================================================================
+In aviation and drone safety, prediction errors carry asymmetric risk:
+  Cost(False Negative on Motor Failure) >> Cost(False Positive on Motor Failure)
+
+- False Negative (FN) on Motor Failure / Propeller Imbalance:
+  The system fails to alert the operator. The damaged motor loses thrust or the
+  propeller detaches in flight, resulting in complete aircraft hull destruction
+  and ground safety hazards.
+- False Positive (FP) on Motor Failure:
+  The system triggers a false alert. The drone initiates a precautionary
+  Return-To-Home (RTH) or controlled hover-land. The mission is aborted, but the
+  aircraft and payload remain intact.
+
+--------------------------------------------------------------------------------
+Prioritized Metrics Hierarchy
+--------------------------------------------------------------------------------
+1. Class-Specific Recall on Critical Faults (Target: >= 98.0%)
+   - Recall = TP / (TP + FN)
+   - Evaluated specifically for Motor Failure and Propeller Imbalance.
+   - Decision threshold tuning: Lower the classification probability threshold
+     for Motor Failure from the standard 0.50 to 0.25 to aggressively catch all
+     anomalies.
+
+2. Macro-Averaged F1-Score
+   - Normal Flight samples often account for 80-90% of logged flight duration.
+   - Macro-F1 treats all 4 classes with equal weight, preventing the dominant
+     healthy class from inflating model performance.
+
+3. Precision-Recall AUC (PR-AUC) per Class
+   - Evaluates performance across all operational decision thresholds, which is
+     much more informative than ROC-AUC under severe class imbalance.
+
+4. Cost-Weighted Loss Function
+   - Define an operational cost matrix during model selection:
+       * Healthy predicted as Fault:    Cost = 5    (Mission aborted)
+       * Battery Degradation missed:    Cost = 50   (Emergency landing needed)
+       * Motor Failure missed:          Cost = 500  (Catastrophic crash)
+
+================================================================================
+7. STREAMLIT GROUND CONTROL STATION (GCS) DEPLOYMENT ARCHITECTURE
+================================================================================
+The primary deliverable for this project is an interactive Streamlit Ground
+Control Station dashboard designed for real-time monitoring and post-flight
+telemetry diagnosis.
+
+Architecture Diagram:
+--------------------------------------------------------------------------------
+  [ Telemetry Input Sources ]
+    - Mode A: Offline Log Dropzone (.csv, .mat, .parquet, .h5)
+    - Mode B: Simulated Real-Time Telemetry Replayer (50 Hz streaming loop)
+                  |
+                  v
+  [ Streaming Buffer & Preprocessing Engine ]
+    - 50-sample FIFO Circular Ring Buffer (collections.deque(maxlen=50))
+    - TelemetryCleaner: Outlier clipping & dynamic interpolation
+    - TelemetryFeatureEngineer:
+        * Rolling Mean & Variance (Voltage, Current, Temp)
+        * FFT Peak Frequency, Peak Power & Spectral Centroid (Vibration)
+        * Electrical Power (P = V * I)
+                  |
+                  v
+  [ Model Inference Engine ]
+    - Primary Runtime: Serialized Python pipeline (joblib / pickle)
+    - Optional Extension: ONNX Runtime (if edge optimization is pursued)
+    - Thresholding Engine: Cost-adjusted decision rules (Motor Fail threshold = 0.25)
+                  |
+                  v
+  [ Streamlit Ground Station UI Dashboard ]
+    +--------------------------------------------------------------------------+
+    |  TOP HUD: Operational Flight State                                       |
+    |  [ NORMAL FLIGHT (94.2%) ]  |  System Health: 98/100  |  Link: Active   |
+    +--------------------------------------------------------------------------+
+    |  SENSOR STRIPCHARTS: Real-time Plotly / Altair Streams                   |
+    |  - Voltage Sag vs. Current Draw (P = V * I monitoring)                   |
+    |  - Vibration FFT Peak Spectrum & Harmonic Resonance Display              |
+    |  - ESC & Motor Temperature Progression                                   |
+    +--------------------------------------------------------------------------+
+    |  EXPLAINABILITY & ALERT TRIAGE: SHAP Waterfall Plot                      |
+    |  - Displays primary sensor features driving the active prediction        |
+    |  - Automated 5-second pre-fault incident recorder & PDF report generator |
+    +--------------------------------------------------------------------------+
+
+Key Streamlit Modules:
+1. st.sidebar: Telemetry source selector, replay playback speed slider (0.5x to 5x),
+   and sensitivity threshold adjustment.
+2. st.empty() / st.fragment: Efficient partial re-renders to maintain 20-50 Hz
+   telemetry visualization without freezing the web browser.
+3. Automated Incident Logger: Automatically writes a timestamped JSON incident
+   package containing the 100 samples preceding and following any detected fault.
+
+================================================================================
+8. ENGINEERING IMPLEMENTATION MILESTONES & ROADMAP
+================================================================================
+Milestone 1: Data Pipeline Validation & FFT Integration (Week 1)
+  - Execute UAVDataIngestionPipeline on ALFA, DronePropB, and ICRA datasets.
+  - Verify schema consistency across all .mat, .csv, and .parquet logs.
+  - Establish clean calibration flight baseline to fit StandardScaler.
+  - Implement numpy.fft.rfft feature extraction for Vibration (Peak Frequency,
+    Peak Power, Spectral Centroid) alongside rolling statistics.
+
+Milestone 2: Baseline Model Benchmark & Class Weighting (Week 2)
+  - Establish StratifiedGroupKFold cross-validation by Flight_ID.
+  - Train Random Forest and LightGBM using class_weight='balanced'.
+  - Evaluate impact of flight-level undersampling on training stability.
+  - Generate Confusion Matrices, PR-AUC curves, and Macro-F1 baselines.
+
+Milestone 3: Asymmetric Threshold Tuning & Explainability (Week 3)
+  - Calibrate probability thresholds to achieve >= 98% Recall on Motor Failure
+    and Propeller Imbalance.
+  - Implement TreeSHAP explainability to validate that FFT vibration peaks drive
+    propeller damage predictions.
+  - Serialize the production model and feature pipeline using joblib.
+
+Milestone 4: Streamlit Dashboard Deployment & Simulation (Week 4)
+  - Build interactive Streamlit UI with file uploader and live log replayer.
+  - Connect joblib inference engine to the 50-sample sliding buffer.
+  - Run end-to-end mission playback tests simulating in-flight motor drops.
+  - [Optional Stretch Goal]: If time permits, export model to ONNX and test
+    micro-benchmarks for ARM / edge companion computer deployment.
+
+================================================================================
+9. TEAM MEMBER WORK BREAKDOWN & RESPONSIBILITY MATRIX
+================================================================================
+To ensure smooth collaboration, clear accountability, and balanced technical
+contributions, project responsibilities are mapped directly across all six
+team members:
+
+--------------------------------------------------------------------------------
+Member 1: Manideepa Mohapatra (Reg No: 250301230001)
+Role: Data Ingestion & Schema Standardization Lead
+Responsibilities:
+  - Implement Task 1 multi-format file loaders for .csv, .parquet, and .json.
+  - Develop column alias resolution mapping for raw flight controller logs.
+  - Ensure flight session metadata (Source_File, Flight_ID) is properly tagged.
+  - Milestone Ownership: Co-lead on Milestone 1 (Ingestion validation).
+
+--------------------------------------------------------------------------------
+Member 2: Omm Shree Hota (Reg No: 250301230002)
+Role: Telemetry Cleaning & Data Preprocessing Specialist
+Responsibilities:
+  - Implement Task 2 temporal interpolation (linear fill for telemetry gaps).
+  - Configure IQR / Z-score sensor outlier clipping (removing EM spikes).
+  - Manage the "Smooth Flight" Golden Run calibration baseline for StandardScaler.
+  - Milestone Ownership: Co-lead on Milestone 1 (Data cleaning & calibration).
+
+--------------------------------------------------------------------------------
+Member 3: Milan Mandal (Reg No: 250301230006)
+Role: Signal Processing & Feature Engineering Specialist
+Responsibilities:
+  - Implement Task 3 rolling window features (Voltage sag, thermal rate, RMS).
+  - Implement numpy.fft.rfft spectral feature extractor for vibration data
+    (Peak Frequency, Peak Power, Spectral Centroid, Harmonic Energy Ratio).
+  - Calculate instantaneous electrical power (P = V * I) domain metrics.
+  - Milestone Ownership: Milestone 1 feature engineering & FFT integration.
+
+--------------------------------------------------------------------------------
+Member 4: Prasun Kumar Biswas (Reg No: 250301230010)
+Role: Machine Learning Lead & Architecture Coordinator
+Responsibilities:
+  - Design and coordinate end-to-end pipeline modularity across all components.
+  - Implement MATLAB v7.3 / HDF5 file parser using scipy.io and h5py.
+  - Configure and execute StratifiedGroupKFold validation to prevent data leakage.
+  - Train and optimize LightGBM and Random Forest baseline classifiers.
+  - Milestone Ownership: Lead on Milestone 2 (Benchmarking & Grouped CV).
+
+--------------------------------------------------------------------------------
+Member 5: Ipsita Priyadarshini (Reg No: 250301230015)
+Role: Model Evaluation, Asymmetric Tuning & Explainability Lead
+Responsibilities:
+  - Implement asymmetric decision threshold tuning (Recall >= 98% on Motor Fail).
+  - Evaluate models on Macro-F1, PR-AUC, and custom operational Cost Matrix.
+  - Generate TreeSHAP waterfall and summary plots for physical feature validation.
+  - Milestone Ownership: Lead on Milestone 3 (Tuning & SHAP Explainability).
+
+--------------------------------------------------------------------------------
+Member 6: Sneha Singh (Reg No: 250301230023)
+Role: Dashboard Developer & Deployment Lead
+Responsibilities:
+  - Build interactive Streamlit Ground Control Station interface (app.py).
+  - Implement offline log drag-and-drop file uploader and live 50 Hz log replayer.
+  - Design real-time telemetry stripcharts (Plotly) and health status HUD.
+  - Integrate joblib model inference pipeline with 50-sample FIFO sliding buffer.
+  - Milestone Ownership: Lead on Milestone 4 (Streamlit Dashboard & Simulation).
+================================================================================

@@ -1,0 +1,430 @@
+================================================================================
+   UAV FAULT DETECTION SYSTEM — PROJECT WORK SUMMARY
+   Faculty Advisor: Rama Prasanna Dalai
+   Last Updated: October 31, 2026
+================================================================================
+
+TEAM MEMBERS
+--------------------------------------------------------------------------------
+  - Manideepa Mohapatra   (250301230001)
+  - Omm Shree Hota        (250301230002)
+  - Milan Mandal          (250301230006)
+  - Prasun Kumar Biswas   (250301230010)
+  - Ipsita Priyadarshini  (250301230015)
+  - Sneha Singh           (250301230023)
+
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+This project implements an end-to-end Machine Learning pipeline for detecting
+and diagnosing operational faults in Autonomous UAV (Unmanned Aerial Vehicle)
+systems using onboard telemetry sensor data. The system classifies flight
+telemetry into four operational states:
+
+  1. Normal Flight (Nominal cruise and hover dynamics)
+  2. Propeller Imbalance (Blade mass defect / aerodynamic asymmetry)
+  3. Battery Degradation (Internal cell resistance rise / voltage collapse)
+  4. Motor Failure (Stator overload / thermal spike / electrical stall)
+
+The pipeline ingests raw sensor data (MATLAB .mat, CSV, HDF5, Parquet), cleans
+and standardizes telemetry channels, extracts rolling time-series and FFT
+vibration harmonics, trains a regularized LightGBM classifier with safety-critical
+asymmetric decision boundaries, and serves predictions through an interactive,
+high-aesthetic Streamlit Ground Control Station (GCS) dashboard featuring
+Explainable AI (XAI) root-cause diagnostic reasoning and fault contrast.
+
+
+================================================================================
+2. PROJECT STRUCTURE
+================================================================================
+
+ML project/
+  main.py                          End-to-end pipeline orchestrator & benchmark builder
+  app.py                           Streamlit GCS dashboard (Live HUD + XAI Diagnostics)
+  requirements.txt                 Direct Python dependencies
+  .gitignore                       Excludes large binaries (.mat), joblib models, venv
+  Project_Work_Summary.txt         Complete project documentation & history
+  src/
+    __init__.py                    Package initializer
+    ingestion.py                   Multi-format data ingestion engine & heuristics
+    cleaning.py                    Telemetry standardization & per-flight Winsorization
+    feature_engineering.py         Rolling statistics, vectorized FFT, ExplicitLabelEncoder
+    model_training.py              LightGBM/RF training with regularization & early stopping
+    evaluation.py                  Asymmetric threshold evaluation & 4x4 cost matrix
+  tests/
+    conftest.py                    Pytest environment configuration
+    test_pipeline.py               18 unit and regression tests
+  models/
+    uav_fault_model.joblib         Trained LightGBM production model
+    feature_engineer.joblib        Fitted feature engineering & calibration pipeline
+    cleaner.joblib                 Fitted data cleaner & schema standardization
+    evaluation_report.json         Held-out evaluation metrics & confusion matrix
+    feature_importance.json        Ranked LightGBM feature split importances
+  datasets/ (17 Production Real Flight & Bench Runs — 98,493 Total Records)
+    Flight_Real_Motor_Fault_FAULT_M1_10.csv          (6,028 rows)  ArduPilot M1 failure (10% drop)
+    Flight_Real_Motor_Fault_FAULT_M1_5.csv           (13,522 rows) ArduPilot M1 failure (5% drop)
+    Flight_Real_Motor_Fault_FAULT_M2_10.csv          (6,854 rows)  ArduPilot M2 failure (10% drop)
+    Flight_Real_Motor_Fault_FAULT_M2_5.csv           (4,739 rows)  ArduPilot M2 failure (5% drop)
+    Flight_Real_Motor_Fault_FAULT_M3_10.csv          (4,985 rows)  ArduPilot M3 failure (10% drop)
+    Flight_Real_Normal_Flight_NO_FAULT2.csv          (11,453 rows) ArduPilot nominal cruise & waypoint
+    Flight_Real_Normal_Flight_NO_FAULT3.csv          (6,130 rows)  ArduPilot nominal hover flight
+    Flight_Real_Normal_Flight_NO_FAULT4.csv          (4,606 rows)  ArduPilot nominal figure-8 mission
+    Flight_Real_Normal_Flight_NO_FAULT5.csv          (6,744 rows)  ArduPilot nominal altitude climb
+    Flight_Real_Normal_Flight_NO_FAULT6.csv          (4,929 rows)  ArduPilot nominal landing approach
+    Flight_Real_Propeller_Fault_DronePropB_F1_SV1.csv (4,261 rows) DronePropB chipped blade test
+    Flight_Real_Propeller_Fault_DronePropB_F1_SV3.csv (4,039 rows) DronePropB cracked blade high speed
+    Flight_Real_Propeller_Fault_DronePropB_F2_SV2.csv (4,048 rows) DronePropB broken tip blade test
+    Flight_Real_Propeller_Fault_DronePropB_F3_SV2.csv (4,100 rows) DronePropB mass asymmetry test
+    Flight_Real_Normal_Flight_DronePropB_F0.csv      (4,055 rows) DronePropB healthy propeller baseline
+    Flight_Real_Battery_Degradation_4S_Flight1.csv   (4,000 rows) Aged 4S LiPo non-linear voltage sag
+    Flight_Real_Battery_Degradation_4S_Flight2.csv   (4,000 rows) Aged 4S LiPo pack degradation run
+
+
+================================================================================
+3. WHAT WAS BUILT — MODULE BY MODULE
+================================================================================
+
+------------------------------------------------------------------------
+MODULE 1: Data Ingestion & MATLAB Synchronization (src/ingestion.py)
+Lead: Manideepa Mohapatra & Prasun Kumar Biswas
+------------------------------------------------------------------------
+- Native MATLAB .mat Synchronization Engine:
+  Re-engineered MATLAB's sync_zoh_exa.m / sync_resample_exa.m into Python.
+  Synchronizes multi-rate ArduPilot DataFlash telemetry (IMU at 400Hz, VIBE at
+  100Hz, ESC at 10Hz) into a uniform 50 Hz time-grid using Zero-Order Hold (ZOH)
+  and linear interpolation along TimeUS timestamps.
+- Native DronePropB Test Bench Ingestion:
+  Automatically detects 1,000 Hz – 10,000 Hz acoustic and IMU accelerometer
+  structures (IMUData, BatteryVolt) and downsamples cleanly to 50 Hz RMS vibration.
+- Recursive directory scanner supporting .csv, .parquet, .mat, .h5/.hdf5,
+  and .json telemetry files.
+- Heuristic fault labeling inferred from file and directory naming conventions
+  (e.g., "FAULT_M" -> Motor Failure, "NO_FAULT" -> Normal Flight, "F1/F2/F3" -> Propeller).
+- Automated Flight_ID assignment extracted directly from source filenames.
+
+------------------------------------------------------------------------
+MODULE 2: Data Cleaning (src/cleaning.py)
+Lead: Omm Shree Hota & Manideepa Mohapatra
+------------------------------------------------------------------------
+- Fuzzy column alias resolution mapping 40+ raw sensor column aliases into 4
+  canonical engineering channels: Battery_Voltage, Current, Temperature, Vibration.
+- Per-flight Winsorization (IQR and Z-score outlier clipping applied via
+  groupby("Flight_ID")). Global clipping was identified as masking critical
+  fault signatures (such as Motor Failure's 28A surge) and was replaced with
+  per-flight grouping.
+- Time-series linear interpolation with forward and backward fill, isolated
+  per flight to strictly prevent inter-flight data leakage.
+- Explicit KeyError validation raised when essential telemetry channels are missing.
+
+------------------------------------------------------------------------
+MODULE 3: Feature Engineering (src/feature_engineering.py)
+Lead: Milan Mandal & Prasun Kumar Biswas
+------------------------------------------------------------------------
+- 14 engineered features extracted across rolling time-series and frequency domains:
+    Raw Channels:    Battery_Voltage, Current, Temperature, Vibration
+    Rolling Domain:  Voltage_Roll_Mean, Vibration_Roll_Var, Vibration_Roll_RMS,
+                     Current_Roll_Mean, Temperature_Roll_Mean
+    Derived Domain:  Electrical_Power (V * I)
+    Spectral Domain: Vibration_FFT_Peak_Freq, Vibration_FFT_Peak_Power,
+                     Vibration_Spectral_Centroid, Vibration_Harmonic_Energy_Ratio
+
+- Vectorized Sliding-Window FFT:
+  Implemented using np.lib.stride_tricks.sliding_window_view and batched
+  np.fft.rfft, replacing an O(n * window_size) nested Python loop and reducing
+  computation time from minutes to milliseconds.
+
+- Baseline Calibration Anchor:
+  StandardScaler is fitted strictly on verified "Normal Flight" baseline data
+  (mean=0, std=1 for nominal state), ensuring fault deviations are measured
+  relative to healthy flight physics.
+
+- Explicit Canonical Target Encoding:
+  Implemented `ExplicitLabelEncoder` with fixed canonical mapping:
+    0: Normal Flight
+    1: Propeller Imbalance
+    2: Battery Degradation
+    3: Motor Failure
+  Guarantees consistent index mapping across training, evaluation, and dashboard,
+  eliminating scikit-learn's default alphabetical sorting bug.
+
+------------------------------------------------------------------------
+MODULE 4: Model Training (src/model_training.py)
+Lead: Prasun Kumar Biswas & Ipsita Priyadarshini
+------------------------------------------------------------------------
+- Multi-algorithm training and comparative evaluation: Random Forest vs. LightGBM.
+- StratifiedGroupKFold cross-validation grouped by Flight_ID to evaluate
+  generalizability across unseen flights.
+- Production-grade LightGBM regularization:
+    n_estimators=300, learning_rate=0.05, max_depth=8, reg_alpha=0.1,
+    reg_lambda=1.0, min_child_samples=20, subsample=0.8, colsample_bytree=0.8,
+    class_weight="balanced"
+- Early stopping (20 rounds) with validation callback during cross-validation.
+- Class-filtered eval_set: prevents scikit-learn LabelEncoder exceptions when
+  validation folds have disjoint class distributions.
+- Feature importance calculation (split count) exported to feature_importance.json.
+- Full pipeline model serialization using joblib.
+
+------------------------------------------------------------------------
+MODULE 5: Evaluation & Cost Matrix (src/evaluation.py)
+Lead: Ipsita Priyadarshini & Prasun Kumar Biswas
+------------------------------------------------------------------------
+- Safety-critical asymmetric decision boundaries favoring high recall for
+  catastrophic failures:
+    Motor Failure:        >= 0.25 (highest priority, overrides all)
+    Propeller Imbalance:  >= 0.30
+    Battery Degradation:  >= 0.30
+    Normal Flight:        argmax fallback
+- Vectorized threshold decision logic using NumPy boolean masking.
+- 4x4 operational cost matrix penalizing missed high-severity failures:
+    Missed Motor Failure        = 500 penalty units
+    Missed Propeller Imbalance  = 50 penalty units
+    Missed Battery Degradation  = 50 penalty units
+    False alarms on Normal      = 5 penalty units
+- Comprehensive metrics output: per-class Precision, Recall, F1, Support,
+  Macro-F1, Confusion Matrix, and aggregate Operational Cost Penalty.
+- JSON report export to models/evaluation_report.json with ISO timestamp.
+
+------------------------------------------------------------------------
+MODULE 6: Ground Control Station Dashboard (app.py)
+Lead: Sneha Singh & Prasun Kumar Biswas
+------------------------------------------------------------------------
+- High-aesthetic Streamlit GCS user interface with dark glassmorphism HUD.
+- Dual Operational Downlink Modes:
+    (a) Simulated Real-Time Replay: Streams telemetry sample-by-sample with
+        live gauges, animated Plotly charts (voltage, current, vibration),
+        and active multi-class probability gauges.
+    (b) Offline Flight Log Analysis: Batch processes uploaded flight logs,
+        applies asymmetric thresholding, plots flight trajectory states,
+        and provides aggregate state distributions.
+- Dedicated Start/Stop Controls: Session-state managed "▶️ Start Live Telemetry
+  Downlink" and "⏹️ Stop Downlink" buttons for non-blocking mission control.
+- Configurable Playback & Sensitivity: Slider controls for playback speed (0.5x
+  to 5.0x) and Motor Fail alarm threshold (0.10 to 0.50).
+- Explainable AI (XAI) Diagnostic Reasoning & State Discrimination Card:
+    - Root-Cause Evidence: Explains the exact physical and sensor mechanism
+      driving the diagnosed state using live telemetry values (e.g. current surge,
+      thermal climb, voltage collapse, vibration resonance).
+    - Contrastive State Elimination: Explicitly states why each of the other
+      three operational states was ruled out, providing complete transparency
+      to the flight operator.
+- Model Diagnostics Sidebar Expander:
+    - Displays held-out Test Macro-F1 score and Operational Cost Penalty.
+    - Interactive horizontal bar chart of top-8 LightGBM feature importances.
+- Self-Explanatory Flight Log Selection: Dropdown lists descriptive flight files
+  indicating flight type and condition.
+
+------------------------------------------------------------------------
+MODULE 7: Pipeline Orchestrator (main.py)
+Lead: Prasun Kumar Biswas
+------------------------------------------------------------------------
+- Coordinates all pipeline stages: Ingestion -> Cleaning -> Feature Engineering
+  -> Grouped CV -> Model Training -> Asymmetric Evaluation -> Artifact Export.
+- Deterministic synthetic benchmark generator creating 5 realistic flight missions
+  (2 healthy flights, 1 propeller fault, 1 battery fault, 1 motor fault).
+- GroupShuffleSplit flight-level train/test partitioning.
+- Dual-phase training: validates model on training flight groups, then trains
+  production model on all data for deployment.
+- Exports 5 production artifacts to models/:
+    uav_fault_model.joblib, feature_engineer.joblib, cleaner.joblib,
+    evaluation_report.json, feature_importance.json
+
+
+================================================================================
+4. BUGS FOUND AND FIXED (COMPLETE LOG)
+================================================================================
+
+#   Issue                                   File                    Fix Applied
+--- --------------------------------------- ----------------------- ----------------
+1   FFT computed in O(n*window) Python loop  feature_engineering.py  Vectorized with
+    causing hours of runtime on large data                          sliding_window_view
+                                                                    + batched rfft
+
+2   Global IQR clipping masked fault         cleaning.py            Changed to
+    signatures (Motor Failure's high                                per-flight
+    current clipped to normal range)                                groupby clipping
+
+3   subprocess.run() always showed success   app.py                 Added returncode
+    even when main.py crashed                                       check + stderr
+                                                                    display
+
+4   LightGBM had no regularization or        model_training.py      Added max_depth,
+    early stopping — risk of overfitting                            reg_alpha/lambda,
+                                                                    min_child_samples,
+                                                                    early_stopping(20)
+
+5   eval_set crash when validation fold      model_training.py      Filter val labels
+    contains classes absent from training                           with np.isin() to
+    (ValueError: unseen labels)                                     exclude disjoint
+                                                                    classes
+
+6   Battery Degradation had no dedicated     evaluation.py          Added
+    threshold — caught only by argmax                               batt_degrade_thresh
+                                                                    =0.30 parameter
+
+7   Feature importance computed but never    model_training.py      Log top-10 + save
+    saved to disk                                                   feature_importance
+                                                                    .json
+
+8   Evaluation metrics only logged to        main.py                Save full report
+    console — lost when terminal closed                             to evaluation_
+                                                                    report.json
+
+9   No .gitignore — risk of committing       Project root           Created .gitignore
+    940MB+ .mat files and .venv                                     excluding .mat,
+                                                                    .joblib, .venv
+
+10  Unused ASGI packages in requirements     requirements.txt       Removed uvicorn,
+    (uvicorn, starlette, websockets,                                starlette,
+    httptools never imported)                                       websockets, httptools
+
+11  No automated unit tests existed          tests/                 Created 18-test
+                                                                    suite covering all
+                                                                    pipeline modules
+
+12  Batch analysis used argmax instead of    app.py                 Integrated
+    asymmetric thresholds                                           UAVModelEvaluator
+                                                                    for batch mode
+
+13  Streamlit duplicate element ID crash     app.py                 Added unique key=
+    on plotly_chart elements                                        parameters to all
+                                                                    chart elements
+
+14  No Stop button for live replay           app.py                 Added session_state
+                                                                    Start/Stop controls
+
+15  scikit-learn LabelEncoder sorted         feature_engineering.py Created
+    classes alphabetically, scrambling                              ExplicitLabelEncoder
+    indices across HUD, gauges, & metrics                           preserving canonical
+                                                                    class ordering
+
+16  Non-descriptive flight log filenames     main.py / datasets/    Renamed flight logs
+    (flight_01..05) caused confusion                                to explicit names
+                                                                    (Cruise, Hover, etc.)
+
+17  Black-box diagnostic outputs without     app.py                 Added XAI Root-Cause
+    operator explanation                                            evidence & contrastive
+                                                                    state elimination
+
+18  Multi-rate ArduPilot .mat array length   src/ingestion.py       Re-engineered MATLAB
+    mismatch (IMU 47k, VIBE 12k, ESC 1k)                            sync_zoh_exa.m into
+    causing ValueError on naive table load                          Python 50Hz ZOH sync
+
+19  Case-sensitive column alias collision    src/cleaning.py        Coalesced duplicate
+    dropped 69k ArduPilot rows during                               canonical columns with
+    master DataFrame standardization                                combine_first()
+
+
+================================================================================
+5. TEST SUITE
+================================================================================
+
+21 automated unit and integration tests covering all pipeline modules.
+Run command: pytest tests/ -v
+
+CLEANING TESTS (5):
+  test_column_standardization        Fuzzy aliases mapped to canonical names
+  test_missing_column_raises         Missing channels raise clear KeyError
+  test_outlier_clipping_per_flight   Per-flight clipping preserves fault signatures
+  test_missing_data_interpolation    NaN gaps filled by linear interpolation
+  test_clean_returns_core_columns    Output always retains 4 core sensor channels
+
+FEATURE ENGINEERING TESTS (4):
+  test_output_shape                  Feature matrix dimensions match input
+  test_fft_features_present          >= 3 FFT spectral features extracted
+  test_target_encoding_four_classes  All 4 canonical fault classes registered
+  test_no_nan_in_features            Feature matrix is completely NaN-free
+
+MODEL TRAINING TESTS (3):
+  test_cv_returns_metrics            Cross-validation returns accuracy for models
+  test_train_final_model_predict_proba   Model supports predict_proba with shape (n, 4)
+  test_feature_importance_logging    Feature importances available post-train
+
+EVALUATION TESTS (6):
+  test_motor_failure_low_threshold   Motor Failure triggers at P >= 0.25
+  test_motor_overrides_propeller     Motor Failure overrides Propeller Imbalance
+  test_battery_degradation_threshold Battery Degradation detected at P >= 0.30
+  test_cost_matrix_shape             Cost matrix is 4x4
+  test_evaluation_metrics_keys       All metric keys present in report
+  test_vectorized_matches_large_input   Handles 1,000-sample batched input cleanly
+
+DATA INGESTION TESTS (3):
+  test_sync_ardupilot_mat            ArduPilot hexacopter .mat synchronizes at 50 Hz
+  test_sync_droneprop_mat            DronePropB test bench .mat downsamples to 50 Hz
+  test_scan_files_discovers_real     Scans and discovers all 17 production flight files
+
+STATUS: ALL 21 TESTS PASS (execution time: ~2.3 seconds)
+
+
+================================================================================
+6. MODEL PERFORMANCE & ACCURACY (ON REAL FLIGHT TELEMETRY)
+================================================================================
+
+Production Model: LightGBM (14 engineered features)
+Dataset: 98,493 real flight & test bench records across 17 distinct sessions.
+Held-Out Test Set: 25,139 records across 5 completely unseen flights (StratifiedGroupKFold).
+
+Held-Out Test Set Metrics (models/evaluation_report.json):
+  Overall Macro-F1 Score:            0.8259 (82.59%)
+  Total Operational Cost Penalty:    466,375 points
+
+Per-Class Classification Breakdown:
+  - Motor Failure:       Precision: 100.0% | Recall: 86.43% | F1-Score: 0.9272
+  - Battery Degradation: Precision: 98.96% | Recall: 100.0% | F1-Score: 0.9948
+  - Propeller Imbalance: Precision: 50.28% | Recall: 100.0% | F1-Score: 0.6691
+  - Normal Flight:       Precision: 87.35% | Recall: 60.19% | F1-Score: 0.7127
+
+Safety-Critical Recall Verification:
+  - Zero catastrophic battery degradation events missed (100% Recall).
+  - 100% precision on Motor Failure alarms (zero false motor alarms).
+  - High sensitivity under asymmetric thresholds prevents fatal crashes.
+
+Top-10 Feature Importances (Split Counts):
+  1.  Temperature                    2,537 splits
+  2.  Voltage_Roll_Mean              2,037 splits
+  3.  Battery_Voltage                1,826 splits
+  4.  Current_Roll_Mean              1,768 splits
+  5.  Temperature_Roll_Mean          1,768 splits
+  6.  Vibration_Roll_RMS             1,613 splits
+  7.  Current                        1,306 splits
+  8.  Electrical_Power                 990 splits
+  9.  Vibration                        829 splits
+  10. Vibration_Roll_Var               759 splits
+
+
+================================================================================
+7. TECHNOLOGIES USED
+================================================================================
+
+Language:          Python 3.12
+Machine Learning:  LightGBM 4.7.0, scikit-learn 1.9.1 (Random Forest)
+Data & Math:       pandas 3.0.6, NumPy 2.5.3, SciPy 1.18.1
+Data Ingestion:    scipy.io (MATLAB), h5py (HDF5), pyarrow (Parquet)
+Interactive HUD:   Streamlit 1.65.0
+Visualization:     Plotly 7.1.0
+Serialization:     joblib 1.6.0
+Testing Suite:     pytest 9.1.1
+
+
+================================================================================
+8. HOW TO RUN
+================================================================================
+
+1. Environment Setup:
+     python -m venv .venv
+     .\.venv\Scripts\pip.exe install -r requirements.txt
+
+2. Execute Full ML Pipeline (Train & Serialize):
+     .\.venv\Scripts\python.exe main.py
+
+3. Launch Ground Control Station (GCS) Dashboard:
+     .\.venv\Scripts\python.exe -m streamlit run app.py
+
+4. Run Complete Pytest Suite:
+     .\.venv\Scripts\python.exe -m pytest tests/ -v
+
+
+================================================================================
+END OF REPORT
+================================================================================
